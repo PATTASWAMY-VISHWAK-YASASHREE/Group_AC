@@ -1,12 +1,38 @@
 # Byte-compiled files
 __pycache__/
 *.py[cod]
+*.so
 
 # Virtual environments
-venv/
-.env/
+venv
+.venv
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
 
 # Logs and cache
 *.log
 *.sqlite3
 .cache/
+*.cache
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Chroma database
+chroma_data/
+*.chroma/
+
+# Python
+dist/
+build/
+*.egg-info/
+
