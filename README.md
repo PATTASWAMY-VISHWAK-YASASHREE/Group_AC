@@ -35,7 +35,7 @@ We built an AI-powered knowledge assistant that instantly answers common telecom
 4. If needed, the system escalates the conversation to a human agent following smart escalation rules.
 
 ## architecture
-<img src="https://ppl-ai-code-interpreter-files.s3.amazonaws.com/web/direct-files/357270ffb80ee4d962ce7b5a1813fb4f/33a167c7-30c1-4f92-905a-caa60bfe4dc2/9bd7e0ad.png" alt="My Logo" width="200" height="100">
+<img src="https://res.cloudinary.com/diryolcmm/image/upload/v1761375995/AI_Telco_Customer_Service_Agent_End-to-End_User_Product_Flow_-_visual_selection_eieja7.png" alt="architecture" width="600" height="600">
 
 ## Components & Responsibilities
 
