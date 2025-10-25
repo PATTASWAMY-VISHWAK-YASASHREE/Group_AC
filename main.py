@@ -671,4 +671,4 @@ if __name__ == "__main__":
     print("   3. ngrok running for Twilio webhooks")
     print("="*60 + "\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=port)
