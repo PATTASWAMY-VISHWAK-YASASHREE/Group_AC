@@ -31,19 +31,19 @@ class TelecomRAGChain:
 
         # RAG Prompt Template for generating support responses
         self.rag_prompt = PromptTemplate(
-            template="""You are a helpful telecom support assistant. Answer the customer's question in simple English.
+            template="""You are a helpful telecom support assistant. Answer the customer's question clearly and concisely.
 
-CONTEXT FROM PAST SUPPORT CASES:
+SIMILAR SOLUTIONS FROM PAST CASES:
 {context}
 
 CUSTOMER QUESTION: {question}
 
 INSTRUCTIONS:
 1. Answer in simple, easy-to-understand English (8th grade reading level)
-2. Be concise (2-3 sentences maximum)
-3. Include ticket IDs from similar cases (e.g., "As seen in ticket T001...")
-4. If unsure, suggest escalation to a human agent
-5. Do NOT make up information
+2. Be concise (1-3 sentences maximum)
+3. Focus on actionable steps the customer can take RIGHT NOW
+4. Do NOT mention ticket IDs or case numbers to the customer
+5. If unsure, simply say "I'm not sure about this - please contact our support team"
 
 ANSWER:""",
             input_variables=["context", "question"]
@@ -51,18 +51,19 @@ ANSWER:""",
 
         # Escalation Detection Prompt
         self.escalation_prompt = PromptTemplate(
-            template="""You are an escalation detection system. Analyze if this support case needs immediate escalation to a human agent.
+            template="""You are an escalation detection system. Analyze if this support case MUST be escalated to a human agent.
 
 CUSTOMER QUESTION: {question}
 
 AI RESPONSE: {response}
 
-ESCALATION TRIGGERS (respond YES if ANY apply):
-- Billing/payment issues or disputes
-- Account security concerns (SIM cloning, fraud, stolen device)
-- Angry/frustrated/angry customer tone
-- Complex technical issues requiring technician
-- Low confidence response (words like "might", "probably", "unclear", "I'm not sure")
+ESCALATION TRIGGERS (respond YES ONLY if serious):
+- Account security issue (SIM cloning, fraud, stolen device, unauthorized access)
+- Billing dispute or fraud (unauthorized charges, double billing that needs refund)
+- Angry/frustrated/hostile customer tone (harsh language, threats, complaints)
+- Complex technical issue that requires technician visit or hardware replacement
+- Account closure or major account changes (closing account, ownership transfer)
+- Issue with AI response (contains "might", "probably", "unclear", "I'm not sure", "I don't know")
 
 Respond with ONLY: "YES" or "NO" (no explanation)""",
             input_variables=["question", "response"]
@@ -85,24 +86,16 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
 
         context_parts = []
         documents = search_results.get("documents", [])
-        ids = search_results.get("ids", [])
         metadatas = search_results.get("metadatas", [])
-        distances = search_results.get("distances", [])
 
         for i, doc in enumerate(documents):
-            ticket_id = ids[i] if i < len(ids) else f"Case_{i}"
-            distance = distances[i] if i < len(distances) else 0
-            relevance_score = 1 - distance  # Convert distance to similarity
-
             # Include resolution from metadata if available
             resolution = ""
             if i < len(metadatas) and metadatas[i].get("resolution"):
-                resolution = f"\nResolution: {metadatas[i]['resolution']}"
+                resolution = f"\n{metadatas[i]['resolution']}"
 
-            context_parts.append(
-                f"CASE {ticket_id} (relevance: {relevance_score:.1%}):\n"
-                f"Issue: {doc}{resolution}"
-            )
+            # Format without ticket IDs for cleaner context
+            context_parts.append(f"Solution {i+1}:\n{doc}{resolution}")
 
         return "\n\n".join(context_parts)
 
