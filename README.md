@@ -34,6 +34,9 @@ We built an AI-powered knowledge assistant that instantly answers common telecom
 3. LLM generates a response using RAG, citing real ticket/dialogue sources.
 4. If needed, the system escalates the conversation to a human agent following smart escalation rules.
 
+## architecture
+<img src="https://ppl-ai-code-interpreter-files.s3.amazonaws.com/web/direct-files/357270ffb80ee4d962ce7b5a1813fb4f/33a167c7-30c1-4f92-905a-caa60bfe4dc2/9bd7e0ad.png" alt="My Logo" width="200" height="100">
+
 ## Components & Responsibilities
 
 - Ingest & Indexing: Parse historical tickets and conversations, create embeddings, and store vectors in ChromaDB/FAISS.
