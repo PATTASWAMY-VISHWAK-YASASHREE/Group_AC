@@ -3,12 +3,15 @@ from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Form, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from embeddings import EmbeddingGenerator
 from chroma import ChromaClientWrapper
 from rag_chain import TelecomRAGChain
+from userdata_manager import get_user_manager, get_user_by_phone, format_user_context, extract_phone_number
 
 load_dotenv()
 
@@ -17,16 +20,18 @@ try:
     embedding_gen = EmbeddingGenerator()
     chroma_client = ChromaClientWrapper()
     rag_chain = TelecomRAGChain()
+    user_manager = get_user_manager()
 except Exception as e:
     raise RuntimeError(f"Failed to initialize components: {e}")
 
-# In-memory session storage: {session_id: {"messages": [...], "created": datetime, "updated": datetime}}
+# In-memory session storage: {session_id: {"messages": [...], "created": datetime, "updated": datetime, "type": "chat|voice", "caller": None}}
 SESSIONS: Dict[str, Dict] = {}
 
 
 class ChatRequest(BaseModel):
     query: str
     top_k: int = 3
+    phone_number: Optional[str] = None  # Optional phone number for user context
 
 
 class ChatResponse(BaseModel):
@@ -39,6 +44,7 @@ class SessionChatRequest(BaseModel):
     session_id: str
     query: str
     top_k: int = 3
+    phone_number: Optional[str] = None  # Optional phone number for user context
 
 
 class SessionChatResponse(BaseModel):
@@ -62,6 +68,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# ============ CORS Configuration ============
+# Allow requests from React frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins in development
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, DELETE, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+
 
 @app.get("/health")
 def health_check():
@@ -76,12 +92,20 @@ def health_check():
 
 # ============ Helper Functions for Session Management ============
 
-def create_session(session_id: str) -> None:
-    """Create a new chat session."""
+def create_session(session_id: str, session_type: str = "chat", caller: Optional[str] = None) -> None:
+    """Create a new chat or voice session.
+    
+    Args:
+        session_id: Unique identifier for the session
+        session_type: "chat" for text, "voice" for phone calls
+        caller: Phone number for voice sessions
+    """
     SESSIONS[session_id] = {
         "messages": [],
         "created_at": datetime.utcnow().isoformat(),
-        "last_updated": datetime.utcnow().isoformat()
+        "last_updated": datetime.utcnow().isoformat(),
+        "type": session_type,
+        "caller": caller
     }
 
 
@@ -114,6 +138,55 @@ def format_history_for_context(history: List[Dict[str, str]]) -> str:
     return history_text + "\n---\n\n"
 
 
+def get_ai_answer_via_rag(question: str, phone_number: Optional[str] = None, session_id: Optional[str] = None, top_k: int = 3) -> Dict:
+    """
+    Get AI answer using the RAG chain with optional user data.
+    
+    Args:
+        question: Customer's question
+        phone_number: Optional phone number to load user data
+        session_id: Optional session ID to include conversation history
+        top_k: Number of similar tickets to retrieve
+    
+    Returns:
+        Dict with "answer", "sources", and "needs_escalation"
+    """
+    try:
+        # Load user data if phone number is provided
+        user_context = ""
+        if phone_number:
+            user_data = get_user_by_phone(phone_number)
+            if user_data:
+                user_context = format_user_context(user_data)
+                print(f"✓ Loaded user context for {phone_number}")
+        
+        # Embed query
+        q_emb = embedding_gen.embed_text(question)
+        
+        # Search Chroma
+        search_results = chroma_client.search_by_embedding(q_emb, n_results=top_k)
+        
+        if not search_results or not search_results.get("documents"):
+            return {
+                "answer": "I don't have similar cases in my database. Please contact our support team for assistance.",
+                "sources": [],
+                "needs_escalation": True
+            }
+        
+        # Run RAG pipeline with user context
+        rag_result = rag_chain.run(question, search_results, user_context=user_context)
+        
+        return rag_result
+        
+    except Exception as e:
+        print(f"❌ RAG Chain Error: {e}")
+        return {
+            "answer": "I'm having trouble connecting to my knowledge base right now. Let me transfer you to a human agent who can help.",
+            "sources": [],
+            "needs_escalation": True
+        }
+
+
 # ============ Stateless Chat Endpoint (no session) ============
 
 @app.post("/chat", response_model=ChatResponse)
@@ -122,14 +195,16 @@ def chat(req: ChatRequest):
     Main chat endpoint using LangChain RAG orchestration (stateless).
 
     Flow:
-    1. Embed user query
-    2. Retrieve similar tickets from Chroma
-    3. Generate response using LangChain RAG chain
-    4. Check if escalation needed
-    5. Return answer + metadata
+    1. Extract phone number from request (optional)
+    2. Load user data if phone number provided
+    3. Embed user query
+    4. Retrieve similar tickets from Chroma
+    5. Generate response using LangChain RAG chain with user + case context
+    6. Check if escalation needed
+    7. Return answer + metadata
 
     Args:
-        req: ChatRequest with query and optional top_k (default 3)
+        req: ChatRequest with query, optional top_k (default 3), and optional phone_number
 
     Returns:
         ChatResponse with answer, source tickets, and escalation flag
@@ -142,10 +217,24 @@ def chat(req: ChatRequest):
                 detail="Query too short. Minimum 3 characters required."
             )
 
-        # Step 1: Embed query
+        # Extract phone number if provided
+        phone_number = None
+        if req.phone_number:
+            phone_number = extract_phone_number(req.phone_number)
+            if phone_number:
+                print(f"📱 Using phone number: {phone_number}")
+
+        # Step 1-2: Load user data if phone number available
+        user_context = ""
+        if phone_number:
+            user_data = get_user_by_phone(phone_number)
+            if user_data:
+                user_context = format_user_context(user_data)
+
+        # Step 3: Embed query
         q_emb = embedding_gen.embed_text(req.query)
 
-        # Step 2: Search Chroma for similar tickets
+        # Step 4: Search Chroma for similar tickets
         search_results = chroma_client.search_by_embedding(
             q_emb,
             n_results=req.top_k
@@ -158,8 +247,8 @@ def chat(req: ChatRequest):
                 needs_escalation=True
             )
 
-        # Step 3-4: Run LangChain RAG pipeline
-        rag_result = rag_chain.run(req.query, search_results)
+        # Step 5-6: Run LangChain RAG pipeline with user context
+        rag_result = rag_chain.run(req.query, search_results, user_context=user_context)
 
         return ChatResponse(
             answer=rag_result["answer"],
@@ -181,10 +270,11 @@ def session_chat(req: SessionChatRequest):
     Chat endpoint with conversation history (stateful).
     
     The LLM can see and reference previous messages in the conversation.
+    User data is loaded from phone number if provided.
     Session history is stored in-memory and will be cleared on app restart.
     
     Args:
-        req: SessionChatRequest with session_id, query, and optional top_k
+        req: SessionChatRequest with session_id, query, optional top_k, and optional phone_number
     
     Returns:
         SessionChatResponse with answer, sources, escalation flag, and full conversation history
@@ -200,6 +290,20 @@ def session_chat(req: SessionChatRequest):
         # Create session if it doesn't exist
         if req.session_id not in SESSIONS:
             create_session(req.session_id)
+        
+        # Extract phone number if provided
+        phone_number = None
+        if req.phone_number:
+            phone_number = extract_phone_number(req.phone_number)
+            if phone_number:
+                print(f"📱 Using phone number for session: {phone_number}")
+        
+        # Load user data if phone number available
+        user_context = ""
+        if phone_number:
+            user_data = get_user_by_phone(phone_number)
+            if user_data:
+                user_context = format_user_context(user_data)
         
         # Step 1: Embed query
         q_emb = embedding_gen.embed_text(req.query)
@@ -219,8 +323,8 @@ def session_chat(req: SessionChatRequest):
                 conversation_history=get_session_history(req.session_id)
             )
         
-        # Step 3-4: Run RAG pipeline
-        rag_result = rag_chain.run(req.query, search_results)
+        # Step 3-4: Run RAG pipeline with user context
+        rag_result = rag_chain.run(req.query, search_results, user_context=user_context)
         
         # Step 5: Add to session history
         add_to_session(req.session_id, "user", req.query)
@@ -285,15 +389,27 @@ def debug_chat(req: ChatRequest):
     """
     Debug endpoint for testing RAG pipeline step-by-step.
     
-    Returns intermediate results: retrieved documents, formatted context, and LLM response.
+    Returns intermediate results: user data, retrieved documents, formatted context, and LLM response.
     """
     try:
+        # Extract phone number if provided
+        phone_number = None
+        user_context = ""
+        if req.phone_number:
+            phone_number = extract_phone_number(req.phone_number)
+            if phone_number:
+                user_data = get_user_by_phone(phone_number)
+                if user_data:
+                    user_context = format_user_context(user_data)
+        
         q_emb = embedding_gen.embed_text(req.query)
         search_results = chroma_client.search_by_embedding(q_emb, n_results=req.top_k)
-        rag_result = rag_chain.run(req.query, search_results)
+        rag_result = rag_chain.run(req.query, search_results, user_context=user_context)
 
         return {
             "query": req.query,
+            "phone_number": phone_number,
+            "user_context_included": bool(user_context),
             "retrieved_count": len(search_results.get("documents", [])),
             "retrieved_case_ids": search_results.get("ids", []),
             "answer": rag_result["answer"],
@@ -304,8 +420,255 @@ def debug_chat(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ VOICE CALL ENDPOINTS (Twilio Integration) ============
+
+@app.post("/voice/incoming")
+async def incoming_call(request: Request):
+    """
+    Handle incoming phone calls - greet caller and request their issue.
+    Integrates with Twilio to capture speech input.
+    """
+    try:
+        form_data = await request.form()
+        caller = form_data.get('From', 'Unknown')
+        call_sid = form_data.get('CallSid', 'unknown')
+        
+        print(f"\n📞 Incoming call from: {caller} (Call SID: {call_sid})")
+        
+        # Create voice session
+        create_session(call_sid, session_type="voice", caller=caller)
+        
+        twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Hello! Welcome to TelecomCare AI Assistant.
+        I can help you with any telecom issue.
+        Please tell me your problem or question.
+    </Say>
+    <Gather 
+        input="speech" 
+        action="/voice/process" 
+        language="en-IN" 
+        speechTimeout="auto"
+        timeout="5"
+        hints="wifi, mobile data, internet, bill, payment, router, network, not working, slow, problem, recharge, plan, sim card">
+        <Say voice="Polly.Aditi" language="en-IN">
+            I'm listening. Please speak now.
+        </Say>
+    </Gather>
+    <Say voice="Polly.Aditi" language="en-IN">
+        I didn't hear anything. Please call back when you're ready. Goodbye!
+    </Say>
+</Response>"""
+        
+        return Response(content=twiml, media_type="application/xml")
+    
+    except Exception as e:
+        print(f"❌ Error in incoming_call: {e}")
+        return Response(
+            content="""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Sorry, something went wrong. Please try again later.
+    </Say>
+</Response>""",
+            media_type="application/xml"
+        )
+
+
+@app.post("/voice/process")
+async def process_speech(
+    SpeechResult: str = Form(None),
+    Confidence: float = Form(0.0),
+    From: str = Form(None),
+    CallSid: str = Form(None)
+):
+    """
+    Process speech input using the RAG chain (same AI logic as chat).
+    Transcribes customer issue and generates intelligent response with user context.
+    
+    The `From` parameter contains the caller's phone number which is used to load user data.
+    """
+    try:
+        print(f"\n🎤 Speech received from {From}")
+        print(f"   CallSid: {CallSid}")
+        print(f"   Transcription: {SpeechResult}")
+        print(f"   Confidence: {Confidence * 100:.1f}%")
+        
+        # Check if speech was understood
+        if not SpeechResult or Confidence < 0.4:
+            print("   ⚠️ Low confidence, asking user to repeat")
+            
+            twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Sorry, I couldn't understand that clearly. Could you please repeat your question more slowly?
+    </Say>
+    <Gather 
+        input="speech" 
+        action="/voice/process" 
+        language="en-IN" 
+        speechTimeout="auto"
+        timeout="5">
+        <Say voice="Polly.Aditi" language="en-IN">
+            Please speak your question again.
+        </Say>
+    </Gather>
+</Response>"""
+            
+            return Response(content=twiml, media_type="application/xml")
+        
+        # Extract phone number from caller ID (From parameter)
+        phone_number = extract_phone_number(From) if From else None
+        if phone_number:
+            print(f"   📱 Extracted phone: {phone_number}")
+        
+        # Get AI-powered answer using RAG chain with user data
+        print(f"   🌟 Getting RAG chain response with user context...")
+        rag_result = get_ai_answer_via_rag(SpeechResult, phone_number=phone_number, session_id=CallSid)
+        answer = rag_result["answer"]
+        needs_escalation = rag_result["needs_escalation"]
+        
+        print(f"   💬 AI Answer: {answer[:100]}...")
+        print(f"   🚨 Escalation needed: {needs_escalation}")
+        
+        # Store in session
+        if CallSid in SESSIONS:
+            add_to_session(CallSid, "user", SpeechResult)
+            add_to_session(CallSid, "assistant", answer)
+        
+        # Escape special characters for XML
+        answer_safe = answer.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;')
+        
+        # Speak the answer back and ask for follow-up
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        {answer_safe}
+    </Say>
+    <Pause length="1"/>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Do you have another question? Say yes or no.
+    </Say>
+    <Gather 
+        input="speech" 
+        action="/voice/followup" 
+        language="en-IN" 
+        speechTimeout="auto"
+        timeout="3"
+        hints="yes, no, yeah, nope, sure, okay">
+        <Say voice="Polly.Aditi" language="en-IN">
+            Say yes for another question, or no to end the call.
+        </Say>
+    </Gather>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Thank you for calling TelecomCare. Have a great day!
+    </Say>
+</Response>"""
+        
+        return Response(content=twiml, media_type="application/xml")
+    
+    except Exception as e:
+        print(f"❌ Error in process_speech: {e}")
+        return Response(
+            content="""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Sorry, something went wrong. Please try again later.
+    </Say>
+</Response>""",
+            media_type="application/xml"
+        )
+
+
+@app.post("/voice/followup")
+async def followup(
+    SpeechResult: str = Form(None),
+    From: str = Form(None),
+    CallSid: str = Form(None)
+):
+    """
+    Handle follow-up questions in voice calls.
+    Checks if caller wants to continue or end the call.
+    """
+    try:
+        user_input = (SpeechResult or "").lower()
+        print(f"\n🔄 Follow-up from {From}: {user_input}")
+        print(f"   CallSid: {CallSid}")
+        
+        # Check if user wants to continue
+        if any(word in user_input for word in ['yes', 'yeah', 'yep', 'sure', 'okay', 'another']):
+            print("   ↻ User wants to ask another question")
+            
+            twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Sure! What's your next question?
+    </Say>
+    <Gather 
+        input="speech" 
+        action="/voice/process" 
+        language="en-IN" 
+        speechTimeout="auto"
+        timeout="5">
+        <Say voice="Polly.Aditi" language="en-IN">
+            I'm listening.
+        </Say>
+    </Gather>
+</Response>"""
+        else:
+            print("   ✓ Ending call")
+            
+            twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Thank you for calling TelecomCare. Have a wonderful day!
+    </Say>
+    <Hangup/>
+</Response>"""
+        
+        return Response(content=twiml, media_type="application/xml")
+    
+    except Exception as e:
+        print(f"❌ Error in followup: {e}")
+        return Response(
+            content="""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Aditi" language="en-IN">
+        Thank you for calling. Goodbye!
+    </Say>
+    <Hangup/>
+</Response>""",
+            media_type="application/xml"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", 8000))
+    
+    print("\n" + "="*60)
+    print("🤖 Telecom Support AI Agent (Chat + Voice)")
+    print("="*60)
+    print(f"\n📍 Server starting at: http://localhost:{port}")
+    print("🌟 AI Model: Gemini 2.5 Flash + RAG Chain")
+    print("\n📋 CHAT ENDPOINTS:")
+    print(f"   GET  /health            - Health check")
+    print(f"   POST /chat              - Stateless chat")
+    print(f"   POST /session/chat      - Session-based chat")
+    print(f"   GET  /session/{{id}}      - Get session info")
+    print(f"   DELETE /session/{{id}}    - Clear session")
+    print(f"   GET  /sessions          - List all sessions")
+    print(f"   POST /chat/debug        - Debug RAG pipeline")
+    print("\n📞 VOICE CALL ENDPOINTS (Twilio):")
+    print(f"   POST /voice/incoming    - Handle incoming calls")
+    print(f"   POST /voice/process     - Process speech with RAG")
+    print(f"   POST /voice/followup    - Handle follow-up questions")
+    print("\n⚠️  Prerequisites:")
+    print("   1. GEMINI_API_KEY in .env")
+    print("   2. TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN in .env")
+    print("   3. ngrok running for Twilio webhooks")
+    print("="*60 + "\n")
+    
     uvicorn.run(app, host="0.0.0.0", port=port, reload=True)

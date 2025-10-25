@@ -1,0 +1,135 @@
+# This file specifies files that should NOT be included when deploying
+# to Google Cloud Run or App Engine
+
+# Standard version control
+.git
+.gitignore
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.emacs.d/
+.vim/
+*.vim
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+*.cover
+.hypothesis/
+.mypy_cache/
+.pytest_cache
+*.egg
+
+# Node (for frontend if building together)
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+.next/
+
+# Development and testing
+test_call.py
+*.test.js
+*.spec.js
+
+# Local development files
+.local/
+*.db
+*.sqlite
+*.sqlite3
+chroma.db/
+chromadb/
+
+# Docker
+.dockerignore
+docker-compose*.yml
+Dockerfile*
+
+# Documentation and logs
+*.md
+!README.md
+!SETUP_GUIDE.md
+*.log
+logs/
+
+# CI/CD
+cloudbuild.yaml
+.gitlab-ci.yml
+
+# Cloud Run and App Engine specific
+.gcloudignore
+app.yaml
+.env.cloud
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# OS specific
+Thumbs.db
+.AppleDouble
+.LSOverride
+._*
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# Project specific
+credentials.json
+service-account-key.json
+.secrets/
+secrets/
+
+# Chroma DB artifacts (will be created fresh)
+.chroma/
+chroma_data/
+
+# Any local data
+data/
+uploads/
+downloads/
+
+# API keys and sensitive data (should be in Cloud Secret Manager)
+.env*
+!.env.example
+
+# Tests and benchmarks
+tests/
+benchmark/

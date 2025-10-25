@@ -1,0 +1,74 @@
+{
+  "users": [
+    {
+      "phone_number": "+918297772006",
+      "name": "Satya viswas",
+      "current_balance": 245.50,
+      "recharge_plan": "Premium Plus 399",
+      "data_left": "45 GB",
+      "validity": "25 days",
+      "last_recharge_date": "2025-10-01",
+      "last_recharge_amount": 399,
+      "talktime_balance": 156.75,
+      "sms_balance": 300,
+      "active_services": ["international roaming", "data rollover"],
+      "upcoming_bill_date": "2025-11-01"
+    },
+    {
+      "phone_number": "+919123456789",
+      "name": "Priya Sharma",
+      "current_balance": 512.00,
+      "recharge_plan": "Ultimate 599",
+      "data_left": "120 GB",
+      "validity": "45 days",
+      "last_recharge_date": "2025-09-15",
+      "last_recharge_amount": 599,
+      "talktime_balance": 245.50,
+      "sms_balance": 500,
+      "active_services": ["prime membership", "cloud storage 100GB"],
+      "upcoming_bill_date": "2025-11-15"
+    },
+    {
+      "phone_number": "+919876543210",
+      "name": "Amit Patel",
+      "current_balance": 89.25,
+      "recharge_plan": "Basic 199",
+      "data_left": "5 GB",
+      "validity": "3 days",
+      "last_recharge_date": "2025-10-22",
+      "last_recharge_amount": 199,
+      "talktime_balance": 50.00,
+      "sms_balance": 100,
+      "active_services": [],
+      "upcoming_bill_date": "2025-10-25"
+    },
+    {
+      "phone_number": "+918765432109",
+      "name": "Sneha Desai",
+      "current_balance": 750.75,
+      "recharge_plan": "Family Plus 899",
+      "data_left": "200 GB",
+      "validity": "60 days",
+      "last_recharge_date": "2025-09-01",
+      "last_recharge_amount": 899,
+      "talktime_balance": 500.00,
+      "sms_balance": 1000,
+      "active_services": ["family sharing", "international roaming", "priority support"],
+      "upcoming_bill_date": "2025-11-01"
+    },
+    {
+      "phone_number": "+919654321098",
+      "name": "Vikram Singh",
+      "current_balance": 125.00,
+      "recharge_plan": "Standard 299",
+      "data_left": "25 GB",
+      "validity": "15 days",
+      "last_recharge_date": "2025-10-10",
+      "last_recharge_amount": 299,
+      "talktime_balance": 75.50,
+      "sms_balance": 200,
+      "active_services": ["data rollover"],
+      "upcoming_bill_date": "2025-10-25"
+    }
+  ]
+}

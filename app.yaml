@@ -1,0 +1,32 @@
+runtime: python311
+service: telecom-support-ai
+
+env: standard
+entrypoint: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8080 --timeout 120"
+
+env_variables:
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+handlers:
+  - url: /.*
+    script: auto
+    secure: always
+    redirect_http_response_code: 301
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 10
+  target_cpu_utilization: 0.6
+  target_throughput_utilization: 0.6
+
+vpc_access_connector:
+  name: "projects/PROJECT_ID/locations/REGION/connectors/CONNECTOR_NAME"
+  # Uncomment above if you need VPC access for Chroma DB or other private services
+
+# Cloud Logging configuration
+logging:
+  level: INFO
+
+# Timeout for requests in seconds
+timeout: 120s

@@ -33,20 +33,19 @@ class TelecomRAGChain:
         self.rag_prompt = PromptTemplate(
             template="""You are a helpful telecom support assistant. Answer the customer's question clearly and concisely.
 
-SIMILAR SOLUTIONS FROM PAST CASES:
-{context}
-
+{user_context}{case_context}
 CUSTOMER QUESTION: {question}
 
 INSTRUCTIONS:
-1. Answer in simple, easy-to-understand English (8th grade reading level)
-2. Be concise (1-3 sentences maximum)
-3. Focus on actionable steps the customer can take RIGHT NOW
-4. Do NOT mention ticket IDs or case numbers to the customer
-5. If unsure, simply say "I'm not sure about this - please contact our support team"
+1. Use the customer account information to provide personalized answers
+2. Answer in simple, easy-to-understand English (8th grade reading level)
+3. Be concise (1-3 sentences maximum)
+4. Focus on actionable steps the customer can take RIGHT NOW
+5. Do NOT mention ticket IDs or case numbers to the customer
+6. If unsure, simply say "I'm not sure about this - please contact our support team"
 
 ANSWER:""",
-            input_variables=["context", "question"]
+            input_variables=["user_context", "case_context", "question"]
         )
 
         # Escalation Detection Prompt
@@ -71,7 +70,7 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
 
         self.output_parser = StrOutputParser()
 
-    def format_context(self, search_results):
+    def format_case_context(self, search_results):
         """
         Format Chroma search results into readable context for the LLM.
 
@@ -82,9 +81,9 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
             str: Formatted context for RAG prompt
         """
         if not search_results or not search_results.get("documents"):
-            return "No similar cases found in database."
+            return "SIMILAR SOLUTIONS FROM PAST CASES:\nNo similar cases found in database."
 
-        context_parts = []
+        context_parts = ["SIMILAR SOLUTIONS FROM PAST CASES:"]
         documents = search_results.get("documents", [])
         metadatas = search_results.get("metadatas", [])
 
@@ -99,21 +98,23 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
 
         return "\n\n".join(context_parts)
 
-    def generate_response(self, question, context):
+    def generate_response(self, question, user_context, case_context):
         """
         Generate RAG response using LangChain chain.
 
         Args:
             question (str): Customer query
-            context (str): Formatted search results from Chroma
+            user_context (str): Formatted user account information
+            case_context (str): Formatted search results from Chroma
 
         Returns:
-            dict: {'response': str, 'context_used': str}
+            dict: {'response': str, 'user_context': str, 'case_context': str}
         """
         # Build RAG chain using LangChain
         rag_chain = (
             {
-                "context": RunnablePassthrough(),
+                "user_context": RunnablePassthrough(),
+                "case_context": RunnablePassthrough(),
                 "question": RunnablePassthrough()
             }
             | self.rag_prompt
@@ -123,13 +124,15 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
 
         # Generate response
         response = rag_chain.invoke({
-            "context": context,
+            "user_context": user_context,
+            "case_context": case_context,
             "question": question
         })
 
         return {
             "response": response.strip(),
-            "context_used": context
+            "user_context": user_context,
+            "case_context": case_context
         }
 
     def check_escalation(self, question, response):
@@ -160,13 +163,14 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
 
         return "YES" in decision
 
-    def run(self, question, search_results):
+    def run(self, question, search_results, user_context=""):
         """
         Full RAG pipeline: retrieve -> format -> generate -> escalate check.
 
         Args:
             question (str): Customer query
             search_results (dict): Chroma search results with documents, ids, metadatas
+            user_context (str): Optional formatted user account information
 
         Returns:
             dict: {
@@ -176,11 +180,11 @@ Respond with ONLY: "YES" or "NO" (no explanation)""",
                 'confidence': str
             }
         """
-        # Step 1: Format retrieved context
-        context = self.format_context(search_results)
+        # Step 1: Format retrieved case context
+        case_context = self.format_case_context(search_results)
 
-        # Step 2: Generate RAG response using LangChain
-        result = self.generate_response(question, context)
+        # Step 2: Generate RAG response using LangChain with user + case context
+        result = self.generate_response(question, user_context, case_context)
 
         # Step 3: Check if escalation needed
         needs_escalation = self.check_escalation(question, result["response"])
