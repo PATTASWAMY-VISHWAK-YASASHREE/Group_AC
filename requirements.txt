@@ -5,3 +5,6 @@ chromadb
 google-genai
 pydantic
 python-dotenv
+langchain
+langchain-google-genai
+langchain-core
