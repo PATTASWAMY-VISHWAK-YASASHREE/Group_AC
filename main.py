@@ -646,7 +646,7 @@ async def followup(
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8080))
     
     print("\n" + "="*60)
     print("🤖 Telecom Support AI Agent (Chat + Voice)")
