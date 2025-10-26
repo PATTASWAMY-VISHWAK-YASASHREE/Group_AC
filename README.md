@@ -1,5 +1,15 @@
 # 🤖 TelecomCare AI Support Agent
 
+## 🎯 Live Demo
+
+👉 **[Visit Live Application](https://telecomcare.netlify.app/login)**
+
+**Demo Credentials:**
+- Phone Number: `8297772006`
+- Try the chat interface or call using Twilio integration
+
+---
+
 ## 📌 Overview
 
 **TelecomCare** is an AI-powered customer support system that handles telecom queries instantly through **chat and voice calls**. It learns from past customer tickets and automatically answers common questions like "How do I check my balance?", "Why is my bill high?", or "How do I activate roaming?". For complex issues, it smartly escalates to human agents.
