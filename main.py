@@ -425,7 +425,7 @@ def debug_chat(req: ChatRequest):
 @app.post("/voice/incoming")
 async def incoming_call(request: Request):
     """
-    Handle incoming phone calls - greet caller and request their issue.
+    Handle incoming phone calls - personalized greeting with user name from userdata.
     Integrates with Twilio to capture speech input.
     """
     try:
@@ -435,22 +435,41 @@ async def incoming_call(request: Request):
         
         print(f"\n📞 Incoming call from: {caller} (Call SID: {call_sid})")
         
-        # Create voice session
-        create_session(call_sid, session_type="voice", caller=caller)
+        # Extract phone number and load user data for personalized greeting
+        phone_number = extract_phone_number(caller)
+        user_name = "there"
+        user_context_loaded = False
         
-        twiml = """<?xml version="1.0" encoding="UTF-8"?>
+        if phone_number:
+            try:
+                user_data = get_user_by_phone(phone_number)
+                if user_data and "name" in user_data:
+                    user_name = user_data["name"].split()[0]  # Get first name only
+                    user_context_loaded = True
+                    print(f"   ✓ User identified: {user_name}")
+            except Exception as e:
+                print(f"   ⚠️ Could not load user data: {e}")
+        
+        # Create voice session with user info
+        create_session(call_sid, session_type="voice", caller=caller)
+        SESSIONS[call_sid]["user_name"] = user_name
+        SESSIONS[call_sid]["phone_number"] = phone_number
+        
+        # Personalized greeting
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Aditi" language="en-IN">
-        Hello! Welcome to TelecomCare AI Assistant.
+        Hello {user_name}! Welcome to TelecomCare AI Assistant.
         I can help you with any telecom issue.
         Please tell me your problem or question.
     </Say>
     <Gather 
         input="speech" 
         action="/voice/process" 
+        method="POST"
         language="en-IN" 
         speechTimeout="auto"
-        timeout="5"
+        timeout="8"
         hints="wifi, mobile data, internet, bill, payment, router, network, not working, slow, problem, recharge, plan, sim card">
         <Say voice="Polly.Aditi" language="en-IN">
             I'm listening. Please speak now.
@@ -459,6 +478,7 @@ async def incoming_call(request: Request):
     <Say voice="Polly.Aditi" language="en-IN">
         I didn't hear anything. Please call back when you're ready. Goodbye!
     </Say>
+    <Hangup/>
 </Response>"""
         
         return Response(content=twiml, media_type="application/xml")
@@ -471,6 +491,7 @@ async def incoming_call(request: Request):
     <Say voice="Polly.Aditi" language="en-IN">
         Sorry, something went wrong. Please try again later.
     </Say>
+    <Hangup/>
 </Response>""",
             media_type="application/xml"
         )
@@ -484,10 +505,8 @@ async def process_speech(
     CallSid: str = Form(None)
 ):
     """
-    Process speech input using the RAG chain (same AI logic as chat).
-    Transcribes customer issue and generates intelligent response with user context.
-    
-    The `From` parameter contains the caller's phone number which is used to load user data.
+    Process speech input using the RAG chain with user context.
+    After response, ask user YES/NO to continue or end call.
     """
     try:
         print(f"\n🎤 Speech received from {From}")
@@ -495,36 +514,51 @@ async def process_speech(
         print(f"   Transcription: {SpeechResult}")
         print(f"   Confidence: {Confidence * 100:.1f}%")
         
+        # Get user name from session
+        user_name = "there"
+        phone_number = None
+        if CallSid in SESSIONS:
+            user_name = SESSIONS[CallSid].get("user_name", "there")
+            phone_number = SESSIONS[CallSid].get("phone_number")
+        
         # Check if speech was understood
-        if not SpeechResult or Confidence < 0.4:
+        if not SpeechResult or Confidence < 0.5:
             print("   ⚠️ Low confidence, asking user to repeat")
             
-            twiml = """<?xml version="1.0" encoding="UTF-8"?>
+            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Aditi" language="en-IN">
-        Sorry, I couldn't understand that clearly. Could you please repeat your question more slowly?
+        Sorry {user_name}, I couldn't understand that clearly. Could you please repeat your question more slowly?
     </Say>
     <Gather 
         input="speech" 
         action="/voice/process" 
+        method="POST"
         language="en-IN" 
         speechTimeout="auto"
-        timeout="5">
+        timeout="8"
+        hints="wifi, mobile data, internet, bill, payment, router, network, not working, slow, problem, recharge, plan, sim card">
         <Say voice="Polly.Aditi" language="en-IN">
             Please speak your question again.
         </Say>
     </Gather>
+    <Say voice="Polly.Aditi" language="en-IN">
+        I didn't hear anything. Please call back when you're ready. Goodbye!
+    </Say>
+    <Hangup/>
 </Response>"""
             
             return Response(content=twiml, media_type="application/xml")
         
-        # Extract phone number from caller ID (From parameter)
-        phone_number = extract_phone_number(From) if From else None
+        # Extract phone number if not in session
+        if not phone_number:
+            phone_number = extract_phone_number(From) if From else None
+        
         if phone_number:
-            print(f"   📱 Extracted phone: {phone_number}")
+            print(f"   📱 Using phone: {phone_number}")
         
         # Get AI-powered answer using RAG chain with user data
-        print(f"   🌟 Getting RAG chain response with user context...")
+        print(f"   🌟 Getting RAG chain response...")
         rag_result = get_ai_answer_via_rag(SpeechResult, phone_number=phone_number, session_id=CallSid)
         answer = rag_result["answer"]
         needs_escalation = rag_result["needs_escalation"]
@@ -540,7 +574,7 @@ async def process_speech(
         # Escape special characters for XML
         answer_safe = answer.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;')
         
-        # Speak the answer back and ask for follow-up
+        # Ask for another question (no YES/NO required, just wait for next question or timeout)
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Aditi" language="en-IN">
@@ -548,22 +582,24 @@ async def process_speech(
     </Say>
     <Pause length="1"/>
     <Say voice="Polly.Aditi" language="en-IN">
-        Do you have another question? Say yes or no.
+        {user_name}, do you have another question?
     </Say>
     <Gather 
         input="speech" 
-        action="/voice/followup" 
+        action="/voice/process" 
+        method="POST"
         language="en-IN" 
         speechTimeout="auto"
-        timeout="3"
-        hints="yes, no, yeah, nope, sure, okay">
+        timeout="8"
+        hints="wifi, mobile data, internet, bill, payment, router, network, not working, slow, problem, recharge, plan, sim card">
         <Say voice="Polly.Aditi" language="en-IN">
-            Say yes for another question, or no to end the call.
+            I'm listening.
         </Say>
     </Gather>
     <Say voice="Polly.Aditi" language="en-IN">
-        Thank you for calling TelecomCare. Have a great day!
+        I didn't hear another question. Thank you for calling TelecomCare, {user_name}. Have a wonderful day!
     </Say>
+    <Hangup/>
 </Response>"""
         
         return Response(content=twiml, media_type="application/xml")
@@ -576,6 +612,7 @@ async def process_speech(
     <Say voice="Polly.Aditi" language="en-IN">
         Sorry, something went wrong. Please try again later.
     </Say>
+    <Hangup/>
 </Response>""",
             media_type="application/xml"
         )
@@ -588,41 +625,24 @@ async def followup(
     CallSid: str = Form(None)
 ):
     """
-    Handle follow-up questions in voice calls.
-    Checks if caller wants to continue or end the call.
+    Legacy endpoint - maintained for backward compatibility.
+    New flow: /voice/process directly handles questions without YES/NO confirmation.
+    If user responds with a question, it's processed.
+    If timeout occurs with no response, call ends gracefully.
     """
     try:
-        user_input = (SpeechResult or "").lower()
-        print(f"\n🔄 Follow-up from {From}: {user_input}")
+        user_name = "there"
+        if CallSid in SESSIONS:
+            user_name = SESSIONS[CallSid].get("user_name", "there")
+        
+        # If no response or unclear, end call
+        print(f"\n🔄 Follow-up from {From}: no response or end of call")
         print(f"   CallSid: {CallSid}")
         
-        # Check if user wants to continue
-        if any(word in user_input for word in ['yes', 'yeah', 'yep', 'sure', 'okay', 'another']):
-            print("   ↻ User wants to ask another question")
-            
-            twiml = """<?xml version="1.0" encoding="UTF-8"?>
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Aditi" language="en-IN">
-        Sure! What's your next question?
-    </Say>
-    <Gather 
-        input="speech" 
-        action="/voice/process" 
-        language="en-IN" 
-        speechTimeout="auto"
-        timeout="5">
-        <Say voice="Polly.Aditi" language="en-IN">
-            I'm listening.
-        </Say>
-    </Gather>
-</Response>"""
-        else:
-            print("   ✓ Ending call")
-            
-            twiml = """<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="Polly.Aditi" language="en-IN">
-        Thank you for calling TelecomCare. Have a wonderful day!
+        Thank you for calling TelecomCare, {user_name}. Have a wonderful day!
     </Say>
     <Hangup/>
 </Response>"""
@@ -635,7 +655,7 @@ async def followup(
             content="""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Aditi" language="en-IN">
-        Thank you for calling. Goodbye!
+        Thank you for calling TelecomCare. Goodbye!
     </Say>
     <Hangup/>
 </Response>""",
